@@ -1,0 +1,13 @@
+name: askap_beam_localisation
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - matplotlib
+  - numpy
+  - pandas
+  - scipy
+  - corner
+  - fitsio
+  - pymultinest
+  - astropy
