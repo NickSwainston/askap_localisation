@@ -31,21 +31,7 @@ import pymultinest
 from scipy.special import erfinv
 from scipy.constants import c
 import pandas as pd
-################################################################################
-"""
-    Tunable MultiNest Parameters
-"""
 
-mmodal   = False                     # do mode separation
-nlive    = 1000                      # number of live points
-tol      = 0.1                       # defines the stopping criteria (0.5, good enough)
-efr      = 1.0                       # sampling efficiency. 0.8 and 0.3 are recommended
-updInt   = 1000                      # after # iterations feedback & the posterior files update
-resume   = False                     # resume from a previous job
-maxiter  = 0                         # max no. of iteration. 0 is unlimited
-initMPI  = False                     # initialize MPI routines?, False if main program handles init
-
-################################################################################
 
 def write_fits(postdata, bins, outfile, raref, decref, weights=None):
     """
@@ -182,14 +168,22 @@ def plot_beam_pos(postdata, frb_data, radius, bins=50, color="blue"):
 
 ################################################################################
 
+def get_bestprof_data(bestprof_files):
+    col_name  = ['beam', 'xpos', 'ypos', 'flux', 'ferr', 'freq', 'sefd']
+    dtype     = ['S2', 'f8', 'f8', 'f4', 'f4', 'f4', 'f4']
+    beam_data = pd.DataFrame([], columns=col_name, dtype=dtype)
+
+    for i, bestprof in enumerate(bestprof_files):
+        # File name should be in the format obsid_ra_dec*.bestprof
+        obsid, raj, decj = bestprof.split("_")[:3]
+        
+        # Get bestprof data from file
+        with open(file_loc,"r") as bestprof:
+            lines = bestprof.readlines()
+
+
 
 def localize_frb(multibeam_file, outroot, save=True, verbose=False):
-    # Load multi_beam_global file
-    col_name  = ['beam', 'xpos', 'ypos', 'flux', 'ferr', 'freq', 'sefd']
-    dtype     = {'beam': 'S2', 'xpos': 'f8', 'ypos': 'f8', 'flux': 'f4', \
-                 'ferr': 'f4', 'freq': 'f4', 'sefd': 'f4'}
-    beam_data = pd.read_csv(multibeam_file, delim_whitespace=True, comment='#', \
-                            names=col_name, dtype=dtype)
 
     xoff  = beam_data.loc[beam_data['flux'].idxmax()].xpos
     yoff  = beam_data.loc[beam_data['flux'].idxmax()].ypos
@@ -287,6 +281,16 @@ def localize_frb(multibeam_file, outroot, save=True, verbose=False):
 
     os.system("mkdir -p -v " + chaindir)  # create temprory sub-dir
 
+    # Tunable MultiNest Parameters
+    mmodal   = False                     # do mode separation
+    nlive    = 1000                      # number of live points
+    tol      = 0.1                       # defines the stopping criteria (0.5, good enough)
+    efr      = 1.0                       # sampling efficiency. 0.8 and 0.3 are recommended
+    updInt   = 1000                      # after # iterations feedback & the posterior files update
+    resume   = False                     # resume from a previous job
+    maxiter  = 0                         # max no. of iteration. 0 is unlimited
+    initMPI  = False                     # initialize MPI routines?, False if main program handles init
+
     # run MultiNest
     pymultinest.run(loglike, prior, n_dims, n_params=n_params, multimodal=mmodal, n_live_points=nlive, \
                  evidence_tolerance=tol, sampling_efficiency=efr, n_iter_before_update=updInt, \
@@ -310,9 +314,9 @@ def localize_frb(multibeam_file, outroot, save=True, verbose=False):
     with open('%sstats.json' % root, mode='w') as f:
 	    json.dump(s, f, indent=2)
 
-    print "  marginal likelihood:"
-    print "    ln Z = %.1f +- %.1f'" % (s['global evidence'], s['global evidence error'])
-    print "  parameters:"
+    print("  marginal likelihood:")
+    print("    ln Z = %.1f +- %.1f'" % (s['global evidence'], s['global evidence error']))
+    print("  parameters:")
     for p, m in zip(parameters, s['marginals']):
 	    lo, hi = m['1sigma']
 	    med    = m['median']
@@ -323,10 +327,10 @@ def localize_frb(multibeam_file, outroot, save=True, verbose=False):
 	    	i = max(0, int(-np.floor(np.log10(sigma))) + 1)
 	    fmt  = '%%.%df' % i
 	    fmts = '\t'.join(['    %-15s' + fmt + " +- " + fmt])
-	    print fmts % (p, med, sigma)
+	    print(fmts % (p, med, sigma))
 
     #########################################################################################
-    print "creating marginal plot ..."
+    print("creating marginal plot ...")
     bins    = 50
 
     postdata = a.get_equal_weighted_posterior()[:,:3]         # only x_pos, y_pos, and SNR
@@ -372,24 +376,39 @@ def askap_fluence(tsamp, bandwidth=336.0, antenna=36):
 if __name__ == "__main__":
     description   = " FRB Localization Recipe."
     parser        = argparse.ArgumentParser(description=description)
-    parser.add_argument('-i', '--beam', dest='multibeam_file', type=str, metavar='', \
+    parser.add_argument('-i', '--beam', dest='multibeam_file', type=str, metavar='',
                               help='Path of the beam position SNR file')
-    parser.add_argument('-f', '--source', dest='sourcename', type=str, metavar='', \
+    parser.add_argument('-b', '--bestprof', dest='bestprof_files', type=str, metavar='', nargs='*',
+                              help='Path of the beam position SNR file')
+    parser.add_argument('-f', '--source', dest='sourcename', type=str, metavar='',
                               help='Source Name', default="None")
-    parser.add_argument('-s', '--save', dest='save', action='store_true', \
+    parser.add_argument('-s', '--save', dest='save', action='store_true',
                          help='Save plots')
 
     args = parser.parse_args()
 
     if (not args.multibeam_file):
-        print 'Input files are required!'
-        print parser.print_help()
+        print('Input files are required!')
+        print(parser.print_help())
         sys.exit(1)
 
-    multibeam_file    = args.multibeam_file                          # Filterbank file
     outroot     = args.sourcename                                    # output of frb_detector.py
 
-    frb_data, postdata, rad1400 = localize_frb(multibeam_file, outroot, save=args.save, verbose=True)
+    if args.bestprof_files and args.multibeam_file:
+        print('Please you either --beam or --bestprof, not both.')
+        print(parser.print_help())
+        sys.exit(1)
+    if args.multibeam_file:
+        # Load multi_beam_global file
+        col_name  = ['beam', 'xpos', 'ypos', 'flux', 'ferr', 'freq', 'sefd']
+        dtype     = {'beam': 'S2', 'xpos': 'f8', 'ypos': 'f8', 'flux': 'f4',
+                    'ferr': 'f4', 'freq': 'f4', 'sefd': 'f4'}
+        beam_data = pd.read_csv(args.multibeam_file, delim_whitespace=True, comment='#',
+                                names=col_name, dtype=dtype)
+    if args.bestprof_files:
+        beam_data = get_bestprof_data(args.bestprof_files)
+    
+    frb_data, postdata, rad1400 = localize_frb(beam_data, outroot, save=args.save, verbose=True)
 
     # put these information for report. Initialize info dict
     localizeinfo = {}
@@ -399,10 +418,9 @@ if __name__ == "__main__":
 
 
     # Calculate confidence limits
-    xpos_mn, ypos_mn, snr_mn = list(map(list, map(lambda v: (v[2], \
-                                v[3]-v[2], v[2]-v[1], v[4]-v[2], v[2]-v[0]), \
-                                zip(*np.percentile(postdata, \
-                                [2.5, 16, 50, 84, 97.5], axis=0)))))
+    xpos_mn, ypos_mn, snr_mn = list(map(list, [(v[2], \
+                                v[3]-v[2], v[2]-v[1], v[4]-v[2], v[2]-v[0]) for v in zip(*np.percentile(postdata, \
+                                [2.5, 16, 50, 84, 97.5], axis=0))]))
 
     # The offset, (x,y), is related to a true sky coordinate, (RA,DEC), by
     #     x = (RA - RA0) * cos(DEC0)
@@ -438,9 +456,9 @@ if __name__ == "__main__":
     localizeinfo["frb_ra"] = c.ra.to_string(unit='hour', precision=1, pad=2)[0]
     localizeinfo["frb_dec"] = c.dec.to_string(unit='degree', precision=1, pad=2)[0]
 
-    print "Reporting values...."
-    for key, value in localizeinfo.iteritems():
-        print key, value
+    print("Reporting values....")
+    for key, value in localizeinfo.items():
+        print(key, value)
 
 
 

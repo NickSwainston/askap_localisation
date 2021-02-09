@@ -1,4 +1,4 @@
-FROM continuumio/miniconda2
+FROM continuumio/miniconda
 
 COPY conda.yml .
 RUN conda env update -n root -f conda.yml && \
