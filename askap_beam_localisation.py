@@ -20,6 +20,7 @@
 import matplotlib
 matplotlib.use('Agg')
 from astropy.coordinates import SkyCoord
+import astropy.units as u
 import os, sys, json, argparse
 import matplotlib.pyplot as plt
 import numpy as np
@@ -68,15 +69,14 @@ def write_fits(postdata, bins, outfile, raref, decref, weights=None):
 
     fitsio.write(filename, H, header=header)
 
-def beam_fwhm(freq):
+def beam_fwhm(freq, max_baseline=12.0):
     """
     ASKAP fwhm calculation (McConnell et al. 2016)
     freq : (in GHz)
     """
     c_light    = 299792458.0
-    diameter   = 12.0
     wavelength = c_light / (freq*1e9)
-    fwhm       = 1.1*wavelength / diameter
+    fwhm       = 1.1*wavelength / max_baseline
 
     return fwhm*180./np.pi
 
@@ -150,7 +150,7 @@ def plot_beam_pos(postdata, frb_data, radius, bins=50, color="blue"):
     plt.ylabel(r'$\Delta \delta $ (deg)', size="large")
 
     postx_ax = plt.axes((0.1, 0.7, 0.6, 0.2), sharex=main_ax)
-    postx_ax.hist(postdata[:,0], bins=bins, normed=True, edgecolor='blue', lw=0.5)
+    postx_ax.hist(postdata[:,0], bins=bins, density=True, edgecolor='blue', lw=0.5)
     postx_ax.set_xlim(xposmin, xposmax)
     plt.ylabel(r'$\rho $ (arb.)', size="large")
     postx_ax.get_yaxis().set_ticks([])
@@ -169,21 +169,41 @@ def plot_beam_pos(postdata, frb_data, radius, bins=50, color="blue"):
 ################################################################################
 
 def get_bestprof_data(bestprof_files):
+    from vcstools.metadb_utils import get_common_obs_metadata
     col_name  = ['beam', 'xpos', 'ypos', 'flux', 'ferr', 'freq', 'sefd']
-    dtype     = ['S2', 'f8', 'f8', 'f4', 'f4', 'f4', 'f4']
-    beam_data = pd.DataFrame([], columns=col_name, dtype=dtype)
+    #dtype     = ['string', 'f8', 'f8', 'f4', 'f4', 'f4', 'f4']
+    dtype     = {'beam': 'string', 'xpos': 'f8', 'ypos': 'f8', 'flux': 'f4',
+                 'ferr': 'f4', 'freq': 'f4', 'sefd': 'f4'}
+    #beam_data = pd.DataFrame([], columns=col_name, dtype=dtype)
+    beam_data = pd.DataFrame([], columns=col_name)
 
-    for i, bestprof in enumerate(bestprof_files):
+    obsid = bestprof_files[0].split("_")[0]
+    freq = get_common_obs_metadata(obsid)[5]/1000 #GHz
+    sefd = 1 # This is wrong but doesn't make a difference
+
+    for i, bestprof_name in enumerate(bestprof_files):
         # File name should be in the format obsid_ra_dec*.bestprof
-        obsid, raj, decj = bestprof.split("_")[:3]
-        
+        raj, decj = bestprof_name.split("_")[1:3]
+        c = SkyCoord( raj, decj, frame='icrs', unit=(u.hourangle,u.deg))
+        rad = c.ra.deg
+        decd = c.dec.deg
         # Get bestprof data from file
-        with open(file_loc,"r") as bestprof:
+        with open(bestprof_name,"r") as bestprof:
             lines = bestprof.readlines()
+            sigma = float(lines[13].split("~")[-1].split(" sigma")[0])
+            # Assume 10% uncertainty
+            # TODO make this more robust
+            sigma_err = sigma * 0.1
+        beam_data = beam_data.append(pd.DataFrame([["{:02d}".format(i), rad, decd, sigma, sigma_err, freq, sefd]], columns=col_name), ignore_index=True)
+    for c_dtype in dtype.keys():
+        if dtype[c_dtype] == 'string':
+            beam_data[c_dtype] = beam_data[c_dtype].astype(str)
+        else:
+            beam_data[c_dtype] = pd.to_numeric(beam_data[c_dtype])#, downcast=dtype[c_dtype])
+    return beam_data
 
 
-
-def localize_frb(multibeam_file, outroot, save=True, verbose=False):
+def localize_frb(beam_data, out_name, max_baseline=12., out_dir="./", save=True, verbose=False):
 
     xoff  = beam_data.loc[beam_data['flux'].idxmax()].xpos
     yoff  = beam_data.loc[beam_data['flux'].idxmax()].ypos
@@ -195,8 +215,10 @@ def localize_frb(multibeam_file, outroot, save=True, verbose=False):
     beam_data['xpos_new'] = (beam_data.xpos - xoff)*np.cos(yoff*np.pi/180.)
     beam_data['ypos_new'] = (beam_data.ypos - yoff)
 
+    fwhm    = beam_fwhm(beam_data.freq, max_baseline=max_baseline)[0]
     # select beams surrounding highest detection SNR
-    beam_mapfig, mask = beam_select(beam_data, radius=0.45)
+    print("fwhm: {}".format(fwhm))
+    beam_mapfig, mask = beam_select(beam_data, radius=fwhm/2)
 
     frb_data = beam_data[~mask]
     frb_data.reset_index(drop=True, inplace=True)
@@ -209,13 +231,16 @@ def localize_frb(multibeam_file, outroot, save=True, verbose=False):
     flux_data = frb_data.flux
     ferr_data = frb_data.ferr
     freq_beam = frb_data.freq
+    print(beam_name)
 
     # normalize sensitivity
     sens  = 2000./frb_data.sefd
 
-    fwhm    = beam_fwhm(freq_beam)
+    print(freq_beam)
+    fwhm    = beam_fwhm(freq_beam, max_baseline=max_baseline)
     rad     = fwhm/2.
     rad1400 = rad*(freq_beam/1.4)
+    print(fwhm)
 
     #########################################################################################
     def beam_gain(x, y, fwhm):
@@ -275,9 +300,9 @@ def localize_frb(multibeam_file, outroot, save=True, verbose=False):
         parameters.append("gain_" + beam_name[ibeam])
 
     n_params = len(parameters)           # total parameters (free + derived)
-    rootbase = "chains/%s-" % (outroot)  # root for output files
-    chaindir = os.path.join(os.path.dirname(multibeam_file), "chains")
-    root     = os.path.join(os.path.dirname(multibeam_file), rootbase)
+    rootbase = "chains/%s-" % (out_name)  # root for output files
+    chaindir = os.path.join(os.path.abspath(out_dir), "chains")
+    root     = os.path.join(os.path.abspath(out_dir), rootbase)
 
     os.system("mkdir -p -v " + chaindir)  # create temprory sub-dir
 
@@ -343,7 +368,7 @@ def localize_frb(multibeam_file, outroot, save=True, verbose=False):
     beam_posfig = plot_beam_pos(postdata, frb_data, rad1400, bins, color="blue")
 
 
-    outfile = os.path.join(os.path.dirname(multibeam_file), outroot)
+    outfile = os.path.join(os.path.abspath(out_dir), out_name)
     if save:
         beam_mapfig.savefig(outfile+'_beammap.pdf', bbox_inches='tight', papertype='letter', \
                                            orientation='landscape')
@@ -380,35 +405,63 @@ if __name__ == "__main__":
                               help='Path of the beam position SNR file')
     parser.add_argument('-b', '--bestprof', dest='bestprof_files', type=str, metavar='', nargs='*',
                               help='Path of the beam position SNR file')
-    parser.add_argument('-f', '--source', dest='sourcename', type=str, metavar='',
-                              help='Source Name', default="None")
+    parser.add_argument('-t', '--telescope', dest='telescope', type=str, metavar='', default='ASKAP',
+                              help='The telescope eing used, either MWA of ASKAP. Default: ASKAP.')
+    parser.add_argument('-o', '--out_dir', dest='out_dir', type=str, metavar='',
+                              help='Output directory', default="./")
+    parser.add_argument('-n', '--out_name', dest='out_name', type=str, metavar='',
+                              help='Output file name', default=None)
     parser.add_argument('-s', '--save', dest='save', action='store_true',
                          help='Save plots')
 
     args = parser.parse_args()
 
-    if (not args.multibeam_file):
+    # Check for required arguments
+    if not (args.multibeam_file or args.bestprof_files):
         print('Input files are required!')
         print(parser.print_help())
         sys.exit(1)
-
-    outroot     = args.sourcename                                    # output of frb_detector.py
-
     if args.bestprof_files and args.multibeam_file:
         print('Please you either --beam or --bestprof, not both.')
         print(parser.print_help())
         sys.exit(1)
+
+    # Handle defaults
+    if args.out_name is None:
+        if args.multibeam_file:
+            args.out_name = args.multibeam_file.split(".")[0]
+        if args.bestprof_files:
+            args.out_name = args.bestprof_files[0].split(".")[0]
+    # Work out max baseline (diameter) in meters
+    if args.telescope == "ASKAP":
+        max_baseline = 12.
+    elif args.telescope == "MWA":
+        from vcstools.metadb_utils import get_obs_array_phase
+        obsid = args.out_name = args.bestprof_files[0].split("_")[0]
+        array_phase = get_obs_array_phase(obsid)
+        if array_phase == 'P1':
+            # True max_baseline is 2800 but due to the minimal amount of long baselines
+            # the following is more realisitic
+            max_baseline = 2000.
+        if array_phase == 'P2C':
+            # True max_baseline is 700.
+            max_baseline = 327.
+        elif array_phase == 'P2E':
+            max_baseline = 4818.
+
+    # Parse input files
     if args.multibeam_file:
         # Load multi_beam_global file
         col_name  = ['beam', 'xpos', 'ypos', 'flux', 'ferr', 'freq', 'sefd']
-        dtype     = {'beam': 'S2', 'xpos': 'f8', 'ypos': 'f8', 'flux': 'f4',
+        dtype     = {'beam': 'string', 'xpos': 'f8', 'ypos': 'f8', 'flux': 'f4',
                     'ferr': 'f4', 'freq': 'f4', 'sefd': 'f4'}
         beam_data = pd.read_csv(args.multibeam_file, delim_whitespace=True, comment='#',
                                 names=col_name, dtype=dtype)
     if args.bestprof_files:
         beam_data = get_bestprof_data(args.bestprof_files)
     
-    frb_data, postdata, rad1400 = localize_frb(beam_data, outroot, save=args.save, verbose=True)
+    #frb_data, postdata, rad1400 = localize_frb(beam_data, out_name, save=args.save, verbose=True)
+    frb_data, postdata, rad1400 = localize_frb(beam_data, args.out_name, max_baseline=max_baseline, out_dir=args.out_dir, save=args.save, verbose=True)
 
     # put these information for report. Initialize info dict
     localizeinfo = {}
