@@ -314,7 +314,7 @@ def localize_frb(beam_data, out_name, max_baseline=12., out_dir="./", save=True,
     updInt   = 1000                      # after # iterations feedback & the posterior files update
     resume   = False                     # resume from a previous job
     maxiter  = 0                         # max no. of iteration. 0 is unlimited
-    initMPI  = False                     # initialize MPI routines?, False if main program handles init
+    initMPI  = True                     # initialize MPI routines?, False if main program handles init
 
     # run MultiNest
     pymultinest.run(loglike, prior, n_dims, n_params=n_params, multimodal=mmodal, n_live_points=nlive, \

@@ -11,3 +11,4 @@ dependencies:
   - fitsio
   - pymultinest
   - astropy
+  - mpi4py
