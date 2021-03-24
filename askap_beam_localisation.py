@@ -32,7 +32,30 @@ import pymultinest
 from scipy.special import erfinv
 from scipy.constants import c
 import pandas as pd
+import glob
 
+
+def check_files(outputfiles_basename):
+    files_all = glob.glob(outputfiles_basename + "*")
+    files = []
+    for file_name in files_all:
+        if file_name.endswith("po") or file_name.endswith("txt") or file_name.endswith("li") or file_name.endswith("eq"):
+            files.append(file_name)
+    print("files: {}".format(files))
+
+    for file_name in files:
+        print(file_name)
+        file_data = np.loadtxt(file_name, dtype=str, ndmin=2)
+        new_data = []
+        for row in file_data:
+             row_temp = []
+             for val in row:
+                  try:
+                      row_temp.append(float(val))
+                  except:
+                      row_temp.append(0.)
+             new_data.append(row_temp)
+        np.savetxt(file_name, new_data)
 
 def write_fits(postdata, bins, outfile, raref, decref, weights=None):
     """
@@ -329,6 +352,7 @@ def localize_frb(beam_data, out_name, max_baseline=12., out_dir="./", save=True,
 
     #########################################################################################
 
+    check_files(root)
     a = pymultinest.Analyzer(n_params = n_params, outputfiles_basename = root)
     s = a.get_stats()
 
