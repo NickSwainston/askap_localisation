@@ -216,7 +216,7 @@ def get_bestprof_data(bestprof_files):
             sigma = float(lines[13].split("~")[-1].split(" sigma")[0])
             # Assume 10% uncertainty
             # TODO make this more robust
-            sigma_err = sigma * 0.1
+            sigma_err = sigma * 0.3
         beam_data = beam_data.append(pd.DataFrame([["{:02d}".format(i), rad, decd, sigma, sigma_err, freq, sefd]], columns=col_name), ignore_index=True)
     for c_dtype in dtype.keys():
         if dtype[c_dtype] == 'string':
